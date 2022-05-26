@@ -50,6 +50,7 @@
 #include "uuid-utils.hh"
 #include "proxy-protocol.hh"
 #include "stat_t.hh"
+#include "xsk.hh"
 
 uint64_t uptimeOfProcess(const std::string& str);
 
@@ -606,6 +607,7 @@ struct ClientState
   std::shared_ptr<BPFFilter> d_filter{nullptr};
   size_t d_maxInFlightQueriesPerConn{1};
   size_t d_tcpConcurrentConnectionsLimit{0};
+  std::shared_ptr<XskExtraInfo> xskInfo;
   int udpFD{-1};
   int tcpFD{-1};
   int tcpListenQueueSize{SOMAXCONN};
@@ -750,6 +752,8 @@ struct DownstreamState: public std::enable_shared_from_this<DownstreamState>
     bool d_tcpCheck{false};
     bool d_tcpOnly{false};
     bool d_addXForwardedHeaders{false}; // for DoH backends
+    MACAddr sourceMACAddr;
+    MACAddr destMACAddr;
   };
 
   DownstreamState(DownstreamState::Config&& config, std::shared_ptr<TLSCtx> tlsCtx, bool connect);
@@ -809,7 +813,7 @@ public:
   std::atomic<bool> hashesComputed{false};
   std::atomic<bool> connected{false};
   bool upStatus{false};
-
+  std::shared_ptr<XskExtraInfo>xskInfo;
 private:
   void connectUDPSockets();
 
@@ -928,7 +932,11 @@ public:
   IDState* getIDState(unsigned int& id, int64_t& generation);
   IDState* getExistingState(unsigned int id);
   void releaseState(unsigned int id);
-
+  void registerXsk(XskSocket &xsk){
+    xskInfo=XskExtraInfo::create();
+    xsk.addServer(xskInfo, d_config.sourceAddr, getProtocol() != dnsdist::Protocol::DoUDP);
+    memcpy(d_config.sourceMACAddr,xsk.source,sizeof(MACAddr));
+  }
   dnsdist::Protocol getProtocol() const
   {
     if (isDoH()) {

@@ -26,6 +26,7 @@
 #include "dnsdist-protocols.hh"
 #include "gettime.hh"
 #include "iputils.hh"
+#include "noinitvector.hh"
 #include "uuid-utils.hh"
 
 struct ClientState;
@@ -271,4 +272,5 @@ struct IDState
   bool destHarvested{false}; // if true, origDest holds the original dest addr, otherwise the listening addr
   bool dnssecOK{false};
   bool useZeroScope{false};
+  std::unique_ptr<PacketBuffer> xskPacketHeader;
 };

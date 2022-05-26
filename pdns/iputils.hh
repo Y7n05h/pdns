@@ -123,6 +123,25 @@ union ComboAddress {
     return rhs.operator<(*this);
   }
 
+  struct addressPortOnlyHash
+  {
+    uint32_t operator()(const ComboAddress& ca) const
+    {
+      const unsigned char* start = nullptr;
+      uint32_t len = 0;
+      if (ca.sin4.sin_family == AF_INET) {
+        start = reinterpret_cast<const unsigned char*>(&ca.sin4.sin_addr.s_addr);
+        auto tmp = burtle(start, 4, 0);
+        return burtle(reinterpret_cast<const uint8_t*>(&ca.sin4.sin_port), 2, tmp);
+      }
+      {
+        start = reinterpret_cast<const unsigned char*>(&ca.sin6.sin6_addr.s6_addr);
+        auto tmp = burtle(start, 16, 0);
+        return burtle(reinterpret_cast<const unsigned char*>(&ca.sin6.sin6_port), 2, tmp);
+      }
+    }
+  };
+
   struct addressOnlyHash
   {
     uint32_t operator()(const ComboAddress& ca) const

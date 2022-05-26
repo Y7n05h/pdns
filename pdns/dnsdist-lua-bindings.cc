@@ -25,6 +25,7 @@
 #include "dnsdist-svc.hh"
 
 #include "dolog.hh"
+#include "xsk.hh"
 
 void setupLuaBindings(LuaContext& luaCtx, bool client)
 {
@@ -625,6 +626,25 @@ void setupLuaBindings(LuaContext& luaCtx, bool client)
       }
     });
 #endif /* HAVE_EBPF */
+  using xskopt_t = LuaAssociativeTable<boost::variant<bool, uint32_t, std::string>>;
+  luaCtx.writeFunction("newXsk", [client](xskopt_t opts) {
+    if (client) {
+      return std::shared_ptr<XskSocket>(nullptr);
+    }
+    int queue_id;
+    int frameNums;
+    std::string ifName;
+    if (opts.count("NIC_queue_id") != 1) {
+      queue_id = boost::get<uint32_t>(opts.at("NIC_queue_id"));
+    }
+    if (opts.count("frameNums") != 1) {
+      queue_id = boost::get<uint32_t>(opts.at("frameNums"));
+    }
+    if (opts.count("ifName") != 1) {
+      ifName = boost::get<std::string>(opts.at("ifname"));
+    }
+    return XskSocket::create(frameNums, 2048, ifName, queue_id);
+  });
 
   /* EDNSOptionView */
   luaCtx.registerFunction<size_t(EDNSOptionView::*)()const>("count", [](const EDNSOptionView& option) {

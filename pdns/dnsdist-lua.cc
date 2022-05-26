@@ -42,6 +42,7 @@
 #include "dnsdist-ecs.hh"
 #include "dnsdist-healthchecks.hh"
 #include "dnsdist-lua.hh"
+#include "xsk.hh"
 #ifdef LUAJIT_VERSION
 #include "dnsdist-lua-ffi.hh"
 #endif /* LUAJIT_VERSION */
@@ -105,7 +106,7 @@ void resetLuaSideEffect()
 
 using localbind_t = LuaAssociativeTable<boost::variant<bool, int, std::string, LuaArray<int>, LuaArray<std::string>, LuaAssociativeTable<std::string>>>;
 
-static void parseLocalBindVars(boost::optional<localbind_t> vars, bool& reusePort, int& tcpFastOpenQueueSize, std::string& interface, std::set<int>& cpus, int& tcpListenQueueSize, uint64_t& maxInFlightQueriesPerConnection, uint64_t& tcpMaxConcurrentConnections)
+static void parseLocalBindVars(boost::optional<localbind_t> vars, bool& reusePort, int& tcpFastOpenQueueSize, std::string& interface, std::set<int>& cpus, int& tcpListenQueueSize, uint64_t& maxInFlightQueriesPerConnection, uint64_t& tcpMaxConcurrentConnections, bool* xsk = nullptr)
 {
   if (vars) {
     if (vars->count("reusePort")) {
@@ -130,6 +131,9 @@ static void parseLocalBindVars(boost::optional<localbind_t> vars, bool& reusePor
       for (const auto& cpu : boost::get<LuaArray<int>>((*vars)["cpus"])) {
         cpus.insert(cpu.second);
       }
+    }
+    if (xsk && vars->count("xsk")) {
+      *xsk = boost::get<bool>((*vars)["xsk"]);
     }
   }
 }
@@ -302,7 +306,7 @@ static void LuaThread(const std::string code)
 
 static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
 {
-  typedef LuaAssociativeTable<boost::variant<bool, std::string, LuaArray<std::string>, DownstreamState::checkfunc_t>> newserver_t;
+  typedef LuaAssociativeTable<boost::variant<bool, std::string, LuaArray<std::string>, DownstreamState::checkfunc_t,std::shared_ptr<XskSocket>>> newserver_t;
   luaCtx.writeFunction("inClientStartup", [client]() {
     return client && !g_configurationDone;
   });
@@ -686,6 +690,10 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
                            return a->d_config.order < b->d_config.order;
                          });
                          g_dstates.setState(states);
+
+                        if(vars.count("xsk")){
+                          ret->registerXsk(boost::get<XskSocket>(vars.at("xsk")));
+                        }
                          return ret;
                        });
 
@@ -746,6 +754,7 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
       return;
     }
     bool reusePort = false;
+    bool xsk = false;
     int tcpFastOpenQueueSize = 0;
     int tcpListenQueueSize = 0;
     uint64_t maxInFlightQueriesPerConn = 0;
@@ -753,7 +762,7 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
     std::string interface;
     std::set<int> cpus;
 
-    parseLocalBindVars(vars, reusePort, tcpFastOpenQueueSize, interface, cpus, tcpListenQueueSize, maxInFlightQueriesPerConn, tcpMaxConcurrentConnections);
+    parseLocalBindVars(vars, reusePort, tcpFastOpenQueueSize, interface, cpus, tcpListenQueueSize, maxInFlightQueriesPerConn, tcpMaxConcurrentConnections, &xsk);
 
     try {
       ComboAddress loc(addr, 53);
@@ -796,6 +805,7 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
       return;
     }
     bool reusePort = false;
+    bool xsk = false;
     int tcpFastOpenQueueSize = 0;
     int tcpListenQueueSize = 0;
     uint64_t maxInFlightQueriesPerConn = 0;
@@ -803,7 +813,7 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
     std::string interface;
     std::set<int> cpus;
 
-    parseLocalBindVars(vars, reusePort, tcpFastOpenQueueSize, interface, cpus, tcpListenQueueSize, maxInFlightQueriesPerConn, tcpMaxConcurrentConnections);
+    parseLocalBindVars(vars, reusePort, tcpFastOpenQueueSize, interface, cpus, tcpListenQueueSize, maxInFlightQueriesPerConn, tcpMaxConcurrentConnections, &xsk);
 
     try {
       ComboAddress loc(addr, 53);
