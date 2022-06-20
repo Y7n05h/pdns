@@ -225,7 +225,8 @@ dnsdist_SOURCES = \
 	tcpiohandler.cc tcpiohandler.hh \
 	threadname.hh threadname.cc \
 	uuid-utils.hh uuid-utils.cc \
-	xpf.cc xpf.hh
+	xpf.cc xpf.hh \
+	xsk.cc xsk.hh
 
 testrunner_SOURCES = \
 	base64.hh \
@@ -328,7 +329,10 @@ dnsdist_LDADD = \
 	$(SYSTEMD_LIBS) \
 	$(NET_SNMP_LIBS) \
 	$(LIBCAP_LIBS) \
-	$(IPCRYPT_LIBS)
+	$(IPCRYPT_LIBS) \
+	-lxdp \
+	-lbpf
+
 
 testrunner_LDFLAGS = \
 	$(AM_LDFLAGS) \

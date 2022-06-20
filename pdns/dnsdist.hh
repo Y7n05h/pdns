@@ -50,6 +50,7 @@
 #include "uuid-utils.hh"
 #include "proxy-protocol.hh"
 #include "stat_t.hh"
+#include "xsk.hh"
 
 uint64_t uptimeOfProcess(const std::string& str);
 
@@ -608,6 +609,7 @@ struct ClientState
   std::shared_ptr<BPFFilter> d_filter{nullptr};
   size_t d_maxInFlightQueriesPerConn{1};
   size_t d_tcpConcurrentConnectionsLimit{0};
+  std::shared_ptr<XskExtraInfo> xskInfo;
   int udpFD{-1};
   int tcpFD{-1};
   int tcpListenQueueSize{SOMAXCONN};
@@ -752,6 +754,8 @@ struct DownstreamState: public std::enable_shared_from_this<DownstreamState>
     bool d_tcpCheck{false};
     bool d_tcpOnly{false};
     bool d_addXForwardedHeaders{false}; // for DoH backends
+    MACAddr sourceMACAddr;
+    MACAddr destMACAddr;
   };
 
   DownstreamState(DownstreamState::Config&& config, std::shared_ptr<TLSCtx> tlsCtx, bool connect);
@@ -811,6 +815,7 @@ public:
   std::atomic<bool> hashesComputed{false};
   std::atomic<bool> connected{false};
   bool upStatus{false};
+  std::shared_ptr<XskExtraInfo> xskInfo;
 
 private:
   void connectUDPSockets();
@@ -820,7 +825,16 @@ private:
   std::atomic_flag threadStarted;
   bool d_stopped{false};
 public:
+  void updateStatisticsInfo()
+  {
+    auto delta = sw.udiffAndSet() / 1000000.0;
+    queryLoad.store(1.0 * (queries.load() - prev.queries.load()) / delta);
+    dropRate.store(1.0 * (reuseds.load() - prev.reuseds.load()) / delta);
+    prev.queries.store(queries.load());
+    prev.reuseds.store(reuseds.load());
 
+    handleTimeouts();
+  }
   void start();
 
   bool isUp() const
@@ -930,7 +944,18 @@ public:
   IDState* getIDState(unsigned int& id, int64_t& generation);
   IDState* getExistingState(unsigned int id);
   void releaseState(unsigned int id);
-
+#ifdef HAVE_XSK
+  void registerXsk(std::shared_ptr<XskSocket>& xsk)
+  {
+    xskInfo = XskExtraInfo::create();
+    if (d_config.sourceAddr.sin4.sin_family == 0) {
+      throw runtime_error("invalid source addr");
+    }
+    xsk->addWorker(xskInfo, d_config.sourceAddr.getPort(), getProtocol() != dnsdist::Protocol::DoUDP);
+    memcpy(d_config.sourceMACAddr, xsk->source, sizeof(MACAddr));
+    xskInfo->sharedEmptyFrameOffset = xsk->sharedEmptyFrameOffset;
+  }
+#endif /* HAVE_XSK */
   dnsdist::Protocol getProtocol() const
   {
     if (isDoH()) {
@@ -1129,4 +1154,3 @@ void setIDStateFromDNSQuestion(IDState& ids, DNSQuestion& dq, DNSName&& qname);
 
 ssize_t udpClientSendRequestToBackend(const std::shared_ptr<DownstreamState>& ss, const int sd, const PacketBuffer& request, bool healthCheck = false);
 void handleResponseSent(const IDState& ids, double udiff, const ComboAddress& client, const ComboAddress& backend, unsigned int size, const dnsheader& cleartextDH, dnsdist::Protocol protocol);
-
