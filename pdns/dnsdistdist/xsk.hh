@@ -29,6 +29,10 @@
 #include <array>
 #include <bits/types/struct_timespec.h>
 #include <boost/lockfree/spsc_queue.hpp>
+#include <boost/multi_index/hashed_index.hpp>
+#include <boost/multi_index/indexed_by.hpp>
+#include <boost/multi_index_container.hpp>
+#include <boost/multi_index/key.hpp>
 #include <cstdint>
 #include <cstring>
 #include <linux/types.h>
@@ -48,51 +52,29 @@ class XskExtraInfo;
 class XskSocket;
 
 #ifdef HAVE_XSK
-struct XskFrameInfo
-{
-  uint64_t offset;
-  uint32_t frameLen;
-
-public:
-  XskFrameInfo(uint64_t offset_, uint32_t frameLen_) :
-    offset(offset_), frameLen(frameLen_) {}
-  XskFrameInfo(const XskFrameInfo&) = default;
-  XskFrameInfo() = default;
-};
-class XskDelayPacketInfo
-{
-
-  XskFrameInfo frame;
-  timespec sendTime;
-
-  friend bool operator<(const XskDelayPacketInfo& s1, const XskDelayPacketInfo& s2) noexcept;
-  friend XskSocket;
-  friend void XskRouter(std::shared_ptr<XskSocket> xsk);
-  uint8_t flags;
-  enum Flag : uint8_t
-  {
-    VALID = 1 << 0,
-    DELAY = 1 << 1,
-  };
-
-public:
-  XskDelayPacketInfo() = default;
-  XskDelayPacketInfo(const XskDelayPacketInfo&) = default;
-  XskDelayPacketInfo(XskPacket& packet, uint64_t umemOffset);
-};
-// Only used for XskSocket::waitForDelay
-bool operator<(const XskDelayPacketInfo& s1, const XskDelayPacketInfo& s2) noexcept;
+using XskPacketPtr = std::unique_ptr<XskPacket>;
 class XskSocket
 {
-  const size_t holdThreshold = 256;
-  const size_t fillThreshold = 128;
+  struct XskRouteInfo
+  {
+    __be16 port;
+    int xskSocketWaker;
+    int workerWaker;
+    std::shared_ptr<XskExtraInfo> worker;
+  };
+  boost::multi_index_container<
+    XskRouteInfo,
+    boost::multi_index::indexed_by<
+      boost::multi_index::hashed_unique<boost::multi_index::key<&XskRouteInfo::xskSocketWaker>>,
+      boost::multi_index::hashed_unique<boost::multi_index::key<&XskRouteInfo::port>>>>
+    workers;
+  static constexpr size_t holdThreshold = 256;
+  static constexpr size_t fillThreshold = 128;
   const size_t frameNum;
   const size_t frameSize;
   const uint32_t queueId;
-  std::priority_queue<XskDelayPacketInfo> waitForDelay;
+  std::priority_queue<XskPacketPtr> waitForDelay;
   std::string ifName;
-  std::unordered_map<uint16_t, int> routeTable;
-  std::unordered_map<int, std::shared_ptr<XskExtraInfo>> extraInfos;
   uint8_t* bufBase;
   vector<pollfd> fds;
   vector<uint64_t> uniqueEmptyFrameOffset;
@@ -103,16 +85,22 @@ class XskSocket
   xsk_socket* socket;
   xsk_umem* umem;
   bpf_object* prog;
+
+  static constexpr uint32_t fqCapacity = XSK_RING_PROD__DEFAULT_NUM_DESCS * 4;
+  static constexpr uint32_t cqCapacity = XSK_RING_CONS__DEFAULT_NUM_DESCS * 4;
+  static constexpr uint32_t rxCapacity = XSK_RING_CONS__DEFAULT_NUM_DESCS * 2;
+  static constexpr uint32_t txCapacity = XSK_RING_PROD__DEFAULT_NUM_DESCS * 2;
+
   constexpr static bool isPowOfTwo(uint32_t value) noexcept;
   [[nodiscard]] static int timeDifference(const timespec& t1, const timespec& t2) noexcept;
   friend void XskRouter(std::shared_ptr<XskSocket> xsk);
 
   [[nodiscard]] uint64_t frameOffset(const XskPacket& packet) const noexcept;
   int firstTimeout();
-  void fillFq() noexcept;
+  void fillFq(uint32_t fillSize = fillThreshold) noexcept;
   void recycle(size_t size) noexcept;
   void getMACFromIfName();
-  void pickUpReadyPacket(std::vector<XskFrameInfo>& packets);
+  void pickUpReadyPacket(std::vector<XskPacketPtr>& packets);
 
 public:
   std::shared_ptr<LockGuarded<vector<uint64_t>>> sharedEmptyFrameOffset;
@@ -121,33 +109,35 @@ public:
   ~XskSocket();
   [[nodiscard]] int xskFd() const noexcept;
   int wait(int timeout);
-  void send(std::vector<XskFrameInfo>& packets);
-  std::vector<XskPacket> recv(uint32_t recvSizeMax, uint32_t* failedCount);
-  void addWorker(std::shared_ptr<XskExtraInfo> s, uint16_t port, bool isTCP);
+  void send(std::vector<XskPacketPtr>& packets);
+  std::vector<XskPacketPtr> recv(uint32_t recvSizeMax, uint32_t* failedCount);
+  void addWorker(std::shared_ptr<XskExtraInfo> s, __be16 port, bool isTCP);
 };
 class XskPacket
 {
-  ComboAddress from;
-  ComboAddress to;
-  uint8_t* frame;
-  uint8_t* l4Header;
-  uint8_t* payload;
-  uint8_t* payloadEnd;
-  uint8_t* frameEnd;
-  timespec sendTime;
-  uint32_t flags{0};
-
-  friend XskSocket;
-  friend XskExtraInfo;
-  friend XskDelayPacketInfo;
-
+public:
   enum Flags : uint32_t
   {
     TCP = 1 << 0,
     UPDATE = 1 << 1,
     DELAY = 1 << 3,
-    REWIRTE = 1 << 4
+    REWRITE = 1 << 4
   };
+
+private:
+  ComboAddress from;
+  ComboAddress to;
+  timespec sendTime;
+  uint8_t* frame;
+  uint8_t* l4Header;
+  uint8_t* payload;
+  uint8_t* payloadEnd;
+  uint8_t* frameEnd;
+  uint32_t flags{0};
+
+  friend XskSocket;
+  friend XskExtraInfo;
+  friend bool operator<(const XskPacketPtr& s1, const XskPacketPtr& s2) noexcept;
 
   constexpr static uint8_t DefaultTTL = 64;
   bool parse();
@@ -186,11 +176,13 @@ public:
   XskPacket() = default;
   XskPacket(void* frame, size_t dataSize, size_t frameSize);
   void addDelay(int relativeMilliseconds) noexcept;
+  void updatePackage() noexcept;
+  [[nodiscard]] uint32_t getFlags() const noexcept;
 };
+bool operator<(const XskPacketPtr& s1, const XskPacketPtr& s2) noexcept;
 class XskExtraInfo : std::enable_shared_from_this<XskExtraInfo>
 {
-  using XskPacketRing = boost::lockfree::spsc_queue<XskPacket, boost::lockfree::capacity<512>>;
-  using XskDelayPacketRing = boost::lockfree::spsc_queue<XskDelayPacketInfo, boost::lockfree::capacity<512>>;
+  using XskPacketRing = boost::lockfree::spsc_queue<XskPacket*, boost::lockfree::capacity<512>>;
 
 public:
   XskExtraInfo();
@@ -200,7 +192,7 @@ public:
   std::shared_ptr<LockGuarded<vector<uint64_t>>> sharedEmptyFrameOffset;
   vector<uint64_t> uniqueEmptyFrameOffset;
   XskPacketRing cq;
-  XskDelayPacketRing sq;
+  XskPacketRing sq;
   size_t frameSize;
 
   static int createEventfd();
@@ -218,12 +210,6 @@ public:
 };
 std::vector<pollfd> getPollFdsForWorker(XskExtraInfo& info);
 #else
-struct XskFrameInfo
-{
-};
-class XskDelayPacketInfo
-{
-};
 class XskSocket
 {
 };

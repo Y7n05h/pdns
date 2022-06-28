@@ -951,7 +951,7 @@ public:
     if (d_config.sourceAddr.sin4.sin_family == 0) {
       throw runtime_error("invalid source addr");
     }
-    xsk->addWorker(xskInfo, d_config.sourceAddr.getPort(), getProtocol() != dnsdist::Protocol::DoUDP);
+    xsk->addWorker(xskInfo, d_config.sourceAddr.getNetworkOrderPort(), getProtocol() != dnsdist::Protocol::DoUDP);
     memcpy(d_config.sourceMACAddr, xsk->source, sizeof(MACAddr));
     xskInfo->sharedEmptyFrameOffset = xsk->sharedEmptyFrameOffset;
   }

@@ -361,11 +361,14 @@ union ComboAddress {
 
   void truncate(unsigned int bits) noexcept;
 
-  uint16_t getPort() const
+  uint16_t getNetworkOrderPort() const noexcept
   {
-    return ntohs(sin4.sin_port);
+    return sin4.sin_port;
   }
-
+  uint16_t getPort() const noexcept
+  {
+    return ntohs(getNetworkOrderPort());
+  }
   void setPort(uint16_t port)
   {
     sin4.sin_port = htons(port);

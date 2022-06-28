@@ -131,6 +131,7 @@ BPF_TABLE_PINNED("hash", struct dns_qname, struct map_value, qnamefilter, 1024, 
 BPF_TABLE_PINNED7("lpm_trie", struct CIDR4, struct map_value, cidr4filter, 1024, "/sys/fs/bpf/dnsdist/cidr4", BPF_F_NO_PREALLOC);
 BPF_TABLE_PINNED7("lpm_trie", struct CIDR6, struct map_value, cidr6filter, 1024, "/sys/fs/bpf/dnsdist/cidr6", BPF_F_NO_PREALLOC);
 
+#ifdef UseXsk
 #define BPF_XSKMAP_PIN(_name, _max_entries, _pinned) \
   struct _name##_table_t                             \
   {                                                  \
@@ -144,6 +145,7 @@ BPF_TABLE_PINNED7("lpm_trie", struct CIDR6, struct map_value, cidr6filter, 1024,
   __attribute__((section("maps/xskmap:" _pinned))) struct _name##_table_t _name = {.max_entries = (_max_entries)}
 
 BPF_XSKMAP_PIN(xsk_map, 16, "/sys/fs/bpf/dnsdist/xskmap");
+#endif /* UseXsk */
 
 /*
  * Initializer of a cursor pointer

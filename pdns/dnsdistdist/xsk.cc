@@ -67,7 +67,7 @@ int XskSocket::firstTimeout()
   }
   timespec now;
   gettime(&now);
-  const auto& firstTime = waitForDelay.top().sendTime;
+  const auto& firstTime = waitForDelay.top()->sendTime;
   const auto res = timeDifference(now, firstTime);
   if (res <= 0) {
     return 0;
@@ -77,17 +77,22 @@ int XskSocket::firstTimeout()
 XskSocket::XskSocket(size_t frameNum_, size_t frameSize_, const std::string& ifName_, uint32_t queue_id, std::string xskMapPath) :
   frameNum(frameNum_), frameSize(frameSize_), queueId(queue_id), ifName(ifName_), sharedEmptyFrameOffset(std::make_shared<LockGuarded<vector<uint64_t>>>())
 {
-  if (!isPowOfTwo(frameNum_) || !isPowOfTwo(frameSize_)) {
-    throw std::runtime_error("The number of frame and the size of frame must is a pow of 2");
+  if (!isPowOfTwo(frameNum_) || !isPowOfTwo(frameSize_)
+      || !isPowOfTwo(fqCapacity) || !isPowOfTwo(cqCapacity) || !isPowOfTwo(rxCapacity) || !isPowOfTwo(txCapacity)) {
+    throw std::runtime_error("The number of frame , the size of frame and the capacity of rings must is a pow of 2");
   }
   getMACFromIfName();
   bufBase = static_cast<uint8_t*>(mmap(nullptr, frameSize * frameNum, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
   if (bufBase == MAP_FAILED) {
     throw std::runtime_error("mmap failed");
   }
+  memset(&cq, 0, sizeof(cq));
+  memset(&fq, 0, sizeof(fq));
+  memset(&tx, 0, sizeof(tx));
+  memset(&rx, 0, sizeof(rx));
   xsk_umem_config umemCfg;
-  umemCfg.fill_size = XSK_RING_PROD__DEFAULT_NUM_DESCS * 2;
-  umemCfg.comp_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
+  umemCfg.fill_size = fqCapacity;
+  umemCfg.comp_size = cqCapacity;
   umemCfg.frame_size = frameSize;
   umemCfg.frame_headroom = XSK_UMEM__DEFAULT_FRAME_HEADROOM;
   umemCfg.flags = 0;
@@ -96,8 +101,8 @@ XskSocket::XskSocket(size_t frameNum_, size_t frameSize_, const std::string& ifN
     throw std::runtime_error("Error creating a umem of size" + std::to_string(frameSize * frameNum) + stringerror(ret));
   }
   xsk_socket_config socketCfg;
-  socketCfg.rx_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
-  socketCfg.tx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
+  socketCfg.rx_size = rxCapacity;
+  socketCfg.tx_size = txCapacity;
   socketCfg.bind_flags = XDP_USE_NEED_WAKEUP;
   socketCfg.xdp_flags = XDP_FLAGS_SKB_MODE;
   socketCfg.libxdp_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
@@ -108,19 +113,22 @@ XskSocket::XskSocket(size_t frameNum_, size_t frameSize_, const std::string& ifN
   for (uint64_t i = 0; i < frameNum; i++) {
     uniqueEmptyFrameOffset.push_back(i * frameSize);
   }
-  fillFq();
+  fillFq(fqCapacity);
+  const auto xskfd = xskFd();
   fds.push_back(pollfd{
-    .fd = xskFd(),
+    .fd = xskfd,
     .events = POLLIN,
     .revents = 0});
-  const auto xskMapFd = bpf_obj_get(xskMapPath.c_str());
-  const auto fd = xskFd();
-  ret = bpf_map_update_elem(xskMapFd, &queue_id, &fd, 0);
+  const auto xskMapFd = FDWrapper(bpf_obj_get(xskMapPath.c_str()));
+  if (xskMapFd.getHandle() < 0) {
+    throw std::runtime_error("Error get BPF map from path");
+  }
+  ret = bpf_map_update_elem(xskMapFd.getHandle(), &queue_id, &xskfd, 0);
   if (ret) {
     throw std::runtime_error("Error insert into xsk_map");
   }
 }
-void XskSocket::fillFq() noexcept
+void XskSocket::fillFq(uint32_t fillSize) noexcept
 {
   {
     auto frames = sharedEmptyFrameOffset->lock();
@@ -131,19 +139,18 @@ void XskSocket::fillFq() noexcept
       }
     }
   }
-  const auto fillSize = uniqueEmptyFrameOffset.size();
-  if (fillSize < fillThreshold) {
+  if (uniqueEmptyFrameOffset.size() < fillSize) {
     return;
   }
   uint32_t idx;
   if (xsk_ring_prod__reserve(&fq, fillSize, &idx) != fillSize) {
     return;
   }
-  for (const auto i : uniqueEmptyFrameOffset) {
-    *xsk_ring_prod__fill_addr(&fq, idx++) = i;
+  for (uint32_t i = 0; i < fillSize; i++) {
+    *xsk_ring_prod__fill_addr(&fq, idx++) = uniqueEmptyFrameOffset.back();
+    uniqueEmptyFrameOffset.pop_back();
   }
   xsk_ring_prod__submit(&fq, idx);
-  uniqueEmptyFrameOffset.clear();
 }
 int XskSocket::wait(int timeout)
 {
@@ -162,7 +169,7 @@ XskSocket::~XskSocket()
 
 int XskSocket::xskFd() const noexcept { return xsk_socket__fd(socket); }
 
-void XskSocket::send(std::vector<XskFrameInfo>& packets)
+void XskSocket::send(std::vector<XskPacketPtr>& packets)
 {
   const auto packetSize = packets.size();
   if (packetSize == 0) {
@@ -175,17 +182,17 @@ void XskSocket::send(std::vector<XskFrameInfo>& packets)
 
   for (const auto& i : packets) {
     *xsk_ring_prod__tx_desc(&tx, idx++) = {
-      .addr = i.offset,
-      .len = i.frameLen,
+      .addr = frameOffset(*i),
+      .len = i->FrameLen(),
       .options = 0};
   }
   xsk_ring_prod__submit(&tx, packetSize);
   packets.clear();
 }
-std::vector<XskPacket> XskSocket::recv(uint32_t recvSizeMax, uint32_t* failedCount)
+std::vector<XskPacketPtr> XskSocket::recv(uint32_t recvSizeMax, uint32_t* failedCount)
 {
   uint32_t idx;
-  std::vector<XskPacket> res;
+  std::vector<XskPacketPtr> res;
   const auto recvSize = xsk_ring_cons__peek(&rx, recvSizeMax, &idx);
   if (recvSize <= 0) {
     return res;
@@ -194,11 +201,13 @@ std::vector<XskPacket> XskSocket::recv(uint32_t recvSizeMax, uint32_t* failedCou
   uint32_t count = 0;
   for (uint32_t i = 0; i < recvSize; i++) {
     const auto* desc = xsk_ring_cons__rx_desc(&rx, idx++);
-    res.emplace_back(reinterpret_cast<void*>(desc->addr + baseAddr), desc->len, frameSize);
-    if (!res.back().parse()) {
+    auto ptr = std::make_unique<XskPacket>(reinterpret_cast<void*>(desc->addr + baseAddr), desc->len, frameSize);
+    if (!ptr->parse()) {
       ++count;
-      uniqueEmptyFrameOffset.push_back(frameOffset(res.back()));
-      res.pop_back();
+      uniqueEmptyFrameOffset.push_back(frameOffset(*ptr));
+    }
+    else {
+      res.push_back(std::move(ptr));
     }
   }
   xsk_ring_cons__release(&rx, recvSize);
@@ -207,13 +216,14 @@ std::vector<XskPacket> XskSocket::recv(uint32_t recvSizeMax, uint32_t* failedCou
   }
   return res;
 }
-void XskSocket::pickUpReadyPacket(std::vector<XskFrameInfo>& packets)
+void XskSocket::pickUpReadyPacket(std::vector<XskPacketPtr>& packets)
 {
   timespec now;
   gettime(&now);
-  while (!waitForDelay.empty() && timeDifference(now, waitForDelay.top().sendTime) <= 0) {
-    const auto& top = waitForDelay.top();
-    packets.push_back(top.frame);
+  while (!waitForDelay.empty() && timeDifference(now, waitForDelay.top()->sendTime) <= 0) {
+    auto& top = const_cast<XskPacketPtr&>(waitForDelay.top());
+    packets.push_back(std::move(top));
+    waitForDelay.pop();
   }
 }
 void XskSocket::recycle(size_t size) noexcept
@@ -428,9 +438,9 @@ void XskPacket::addDelay(const int relativeMilliseconds) noexcept
   sendTime.tv_sec += sendTime.tv_nsec / 1000000000L;
   sendTime.tv_nsec %= 1000000000L;
 }
-bool operator<(const XskDelayPacketInfo& s1, const XskDelayPacketInfo& s2) noexcept
+bool operator<(const XskPacketPtr& s1, const XskPacketPtr& s2) noexcept
 {
-  return s1.sendTime < s2.sendTime;
+  return s1->sendTime < s2->sendTime;
 }
 const ComboAddress& XskPacket::getFromAddr() const noexcept
 {
@@ -690,19 +700,25 @@ std::shared_ptr<XskExtraInfo> XskExtraInfo::create()
 {
   return std::make_shared<XskExtraInfo>();
 }
-void XskSocket::addWorker(std::shared_ptr<XskExtraInfo> s, uint16_t port, bool isTCP)
+void XskSocket::addWorker(std::shared_ptr<XskExtraInfo> s, __be16 port, bool isTCP)
 {
   extern std::atomic<bool> g_configurationDone;
   if (g_configurationDone) {
     throw runtime_error("Add a server with xsk at runtime is not supported");
   }
-  auto socketWaker = s->xskSocketWaker;
-  if (extraInfos.count(socketWaker)) {
+  const auto socketWaker = s->xskSocketWaker;
+  const auto workerWaker = s->workerWaker;
+  const auto& socketWakerIdx = workers.get<0>();
+  if (socketWakerIdx.contains(socketWaker)) {
     throw runtime_error("Server already exist");
   }
-  routeTable[port] = socketWaker;
   s->umemBufBase = bufBase;
-  extraInfos[socketWaker] = std::move(s);
+  workers.insert(XskRouteInfo{
+    .port = port,
+    .xskSocketWaker = socketWaker,
+    .workerWaker = workerWaker,
+    .worker = std::move(s),
+  });
   fds.push_back(pollfd{
     .fd = socketWaker,
     .events = POLLIN,
@@ -731,22 +747,6 @@ void XskSocket::getMACFromIfName()
   }
   memcpy(source, ifr.ifr_hwaddr.sa_data, sizeof(source));
   close(fd);
-}
-
-XskDelayPacketInfo::XskDelayPacketInfo(XskPacket& packet, uint64_t umemOffset) :
-  frame(umemOffset, packet.FrameLen())
-{
-  if (!(packet.flags & XskPacket::UPDATE)) {
-    return;
-  }
-  flags = XskDelayPacketInfo::VALID;
-  if (packet.flags & XskPacket::DELAY) {
-    flags |= XskDelayPacketInfo::DELAY;
-    sendTime = packet.sendTime;
-  }
-  if (!(packet.flags & XskPacket::REWIRTE)) {
-    packet.changeDirectAndUpdateChecksum();
-  }
 }
 [[nodiscard]] int XskSocket::timeDifference(const timespec& t1, const timespec& t2) noexcept
 {
@@ -802,5 +802,18 @@ void* XskExtraInfo::getEmptyframe()
     return offset + umemBufBase;
   }
   return nullptr;
+}
+uint32_t XskPacket::getFlags() const noexcept
+{
+  return flags;
+}
+void XskPacket::updatePackage() noexcept
+{
+  if (!(flags & UPDATE)) {
+    return;
+  }
+  if (!(flags & REWIRTE)) {
+    changeDirectAndUpdateChecksum();
+  }
 }
 #endif /* HAVE_XSK */
