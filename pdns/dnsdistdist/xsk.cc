@@ -74,10 +74,10 @@ int XskSocket::firstTimeout()
   }
   return res;
 }
-XskSocket::XskSocket(size_t frameNum_, size_t frameSize_, const std::string& ifName_, uint32_t queue_id, std::string xskMapPath) :
-  frameNum(frameNum_), frameSize(frameSize_), queueId(queue_id), ifName(ifName_), sharedEmptyFrameOffset(std::make_shared<LockGuarded<vector<uint64_t>>>())
+XskSocket::XskSocket(size_t frameNum_, const std::string& ifName_, uint32_t queue_id, std::string xskMapPath) :
+  frameNum(frameNum_), queueId(queue_id), ifName(ifName_), sharedEmptyFrameOffset(std::make_shared<LockGuarded<vector<uint64_t>>>())
 {
-  if (!isPowOfTwo(frameNum_) || !isPowOfTwo(frameSize_)
+  if (!isPowOfTwo(frameNum_) || !isPowOfTwo(frameSize)
       || !isPowOfTwo(fqCapacity) || !isPowOfTwo(cqCapacity) || !isPowOfTwo(rxCapacity) || !isPowOfTwo(txCapacity)) {
     throw std::runtime_error("The number of frame , the size of frame and the capacity of rings must is a pow of 2");
   }
@@ -492,7 +492,7 @@ void XskPacket::setAddr(const ComboAddress& from_, MACAddr fromMAC, const ComboA
 }
 void XskPacket::rewrite() noexcept
 {
-  flags |= REWIRTE;
+  flags |= REWRITE;
   auto* eth = reinterpret_cast<ethhdr*>(frame);
   if (to.isIPv4()) {
     eth->h_proto = htons(ETH_P_IP);
@@ -812,7 +812,7 @@ void XskPacket::updatePackage() noexcept
   if (!(flags & UPDATE)) {
     return;
   }
-  if (!(flags & REWIRTE)) {
+  if (!(flags & REWRITE)) {
     changeDirectAndUpdateChecksum();
   }
 }

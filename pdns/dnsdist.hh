@@ -607,9 +607,9 @@ struct ClientState
   std::shared_ptr<TLSFrontend> tlsFrontend{nullptr};
   std::shared_ptr<DOHFrontend> dohFrontend{nullptr};
   std::shared_ptr<BPFFilter> d_filter{nullptr};
+  std::shared_ptr<XskExtraInfo> xskInfo;
   size_t d_maxInFlightQueriesPerConn{1};
   size_t d_tcpConcurrentConnectionsLimit{0};
-  std::shared_ptr<XskExtraInfo> xskInfo;
   int udpFD{-1};
   int tcpFD{-1};
   int tcpListenQueueSize{SOMAXCONN};
@@ -723,6 +723,8 @@ struct DownstreamState: public std::enable_shared_from_this<DownstreamState>
     std::string d_dohPath;
     std::string name;
     std::string nameWithAddr;
+    MACAddr sourceMACAddr;
+    MACAddr destMACAddr;
     size_t d_numberOfSockets{1};
     size_t d_maxInFlightQueriesPerConn{1};
     size_t d_tcpConcurrentConnectionsLimit{0};
@@ -754,8 +756,6 @@ struct DownstreamState: public std::enable_shared_from_this<DownstreamState>
     bool d_tcpCheck{false};
     bool d_tcpOnly{false};
     bool d_addXForwardedHeaders{false}; // for DoH backends
-    MACAddr sourceMACAddr;
-    MACAddr destMACAddr;
   };
 
   DownstreamState(DownstreamState::Config&& config, std::shared_ptr<TLSCtx> tlsCtx, bool connect);
@@ -832,8 +832,6 @@ public:
     dropRate.store(1.0 * (reuseds.load() - prev.reuseds.load()) / delta);
     prev.queries.store(queries.load());
     prev.reuseds.store(reuseds.load());
-
-    handleTimeouts();
   }
   void start();
 

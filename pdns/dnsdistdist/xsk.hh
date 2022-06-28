@@ -53,6 +53,11 @@ class XskSocket;
 
 #ifdef HAVE_XSK
 using XskPacketPtr = std::unique_ptr<XskPacket>;
+
+// We use an XskSocket to manage an AF_XDP Socket corresponding to a NIC queue.
+// The XDP program running in the kernel redirects the data to the XskSocket in userspace.
+// XskSocket routes packets to multiple worker threads registered on XskSocket via XskSocket::addWorker based on the destination port number of the packet.
+// The kernel and the worker thread holding XskExtraInfo will wake up the XskSocket through XskFd and the Eventfd corresponding to each worker thread, respectively.
 class XskSocket
 {
   struct XskRouteInfo
@@ -70,8 +75,8 @@ class XskSocket
     workers;
   static constexpr size_t holdThreshold = 256;
   static constexpr size_t fillThreshold = 128;
+  static constexpr size_t frameSize = 2048;
   const size_t frameNum;
-  const size_t frameSize;
   const uint32_t queueId;
   std::priority_queue<XskPacketPtr> waitForDelay;
   std::string ifName;
@@ -104,7 +109,7 @@ class XskSocket
 
 public:
   std::shared_ptr<LockGuarded<vector<uint64_t>>> sharedEmptyFrameOffset;
-  XskSocket(size_t frameNum, size_t frameSize, const std::string& ifName, uint32_t queue_id, std::string xskMapPath);
+  XskSocket(size_t frameNum, const std::string& ifName, uint32_t queue_id, std::string xskMapPath);
   MACAddr source;
   ~XskSocket();
   [[nodiscard]] int xskFd() const noexcept;
@@ -180,6 +185,10 @@ public:
   [[nodiscard]] uint32_t getFlags() const noexcept;
 };
 bool operator<(const XskPacketPtr& s1, const XskPacketPtr& s2) noexcept;
+
+// XskExtraInfo obtains XskPackets of specific ports in the NIC from XskSocket through cq. 
+// After finishing processing the packet, XskExtraInfo puts the packet into sq so that XskSocket decides whether to send it through the network card according to XskPacket::flags.
+// XskExtraInfo wakes up XskSocket via xskSocketWaker after putting the packets in sq.
 class XskExtraInfo : std::enable_shared_from_this<XskExtraInfo>
 {
   using XskPacketRing = boost::lockfree::spsc_queue<XskPacket*, boost::lockfree::capacity<512>>;

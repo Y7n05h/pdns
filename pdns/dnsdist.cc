@@ -667,6 +667,7 @@ void responderThread(std::shared_ptr<DownstreamState> dss)
         if (pollfds[1].revents & POLLIN) {
           needNotify = true;
           dss->updateStatisticsInfo();
+          dss->handleTimeouts();
           if (dss->d_nextCheck <= 1) {
             dss->d_nextCheck = dss->d_config.checkInterval;
             if (dss->d_config.availability == DownstreamState::Availability::Auto) {
@@ -2184,6 +2185,7 @@ static void healthChecksThread()
       }
 #endif /* HAVE_XSK */
       dss->updateStatisticsInfo();
+      dss->handleTimeouts();
 
       if (dss->d_nextCheck > 1) {
         --dss->d_nextCheck;

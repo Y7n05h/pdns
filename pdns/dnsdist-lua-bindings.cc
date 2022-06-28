@@ -690,7 +690,7 @@ void setupLuaBindings(LuaContext& luaCtx, bool client)
     });
 #endif /* HAVE_EBPF */
 #ifdef HAVE_XSK
-  using xskopt_t = LuaAssociativeTable<boost::variant<bool, uint32_t, std::string>>;
+  using xskopt_t = LuaAssociativeTable<boost::variant<uint32_t, std::string>>;
   luaCtx.writeFunction("newXsk", [client](xskopt_t opts) {
     if (g_configurationDone) {
       throw std::runtime_error("newXsk() only can be used at configuration time!");
@@ -727,7 +727,7 @@ void setupLuaBindings(LuaContext& luaCtx, bool client)
       throw std::runtime_error("bpfProgPath field is required!");
     }
     extern std::vector<std::shared_ptr<XskSocket>> g_xsk;
-    auto socket = std::make_shared<XskSocket>(frameNums, 2048, ifName, queue_id, path);
+    auto socket = std::make_shared<XskSocket>(frameNums, ifName, queue_id, path);
     g_xsk.push_back(socket); 
     return socket;
   });
