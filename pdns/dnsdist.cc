@@ -659,7 +659,7 @@ void responderThread(std::shared_ptr<DownstreamState> dss)
             if (release) {
               dss->releaseState(queryId);
             }
-            packet->updatePackage();
+            packet->updatePacket();
             xskInfo->sq.push(packet);
           });
           xskInfo->cleanSocketNotification();
@@ -1993,7 +1993,7 @@ static void xskClientThread(ClientState* cs)
     }
     xskInfo->cq.consume_all([&](XskPacket* packet) {
       ProcessXskQuery(*cs, holders, *packet);
-      packet->updatePackage();
+      packet->updatePacket();
       xskInfo->sq.push(packet);
     });
     xskInfo->notifyXskSocket();

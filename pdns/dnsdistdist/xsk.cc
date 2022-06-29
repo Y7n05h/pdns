@@ -704,7 +704,7 @@ void XskSocket::addWorker(std::shared_ptr<XskWorker> s, __be16 port, bool isTCP)
 {
   extern std::atomic<bool> g_configurationDone;
   if (g_configurationDone) {
-    throw runtime_error("Add a server with xsk at runtime is not supported");
+    throw runtime_error("Adding a server with xsk at runtime is not supported");
   }
   const auto socketWaker = s->xskSocketWaker;
   const auto workerWaker = s->workerWaker;
@@ -807,7 +807,7 @@ uint32_t XskPacket::getFlags() const noexcept
 {
   return flags;
 }
-void XskPacket::updatePackage() noexcept
+void XskPacket::updatePacket() noexcept
 {
   if (!(flags & UPDATE)) {
     return;

@@ -181,7 +181,7 @@ public:
   XskPacket() = default;
   XskPacket(void* frame, size_t dataSize, size_t frameSize);
   void addDelay(int relativeMilliseconds) noexcept;
-  void updatePackage() noexcept;
+  void updatePacket() noexcept;
   [[nodiscard]] uint32_t getFlags() const noexcept;
 };
 bool operator<(const XskPacketPtr& s1, const XskPacketPtr& s2) noexcept;
