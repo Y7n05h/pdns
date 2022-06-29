@@ -607,7 +607,7 @@ struct ClientState
   std::shared_ptr<TLSFrontend> tlsFrontend{nullptr};
   std::shared_ptr<DOHFrontend> dohFrontend{nullptr};
   std::shared_ptr<BPFFilter> d_filter{nullptr};
-  std::shared_ptr<XskExtraInfo> xskInfo;
+  std::shared_ptr<XskWorker> xskInfo;
   size_t d_maxInFlightQueriesPerConn{1};
   size_t d_tcpConcurrentConnectionsLimit{0};
   int udpFD{-1};
@@ -815,7 +815,7 @@ public:
   std::atomic<bool> hashesComputed{false};
   std::atomic<bool> connected{false};
   bool upStatus{false};
-  std::shared_ptr<XskExtraInfo> xskInfo;
+  std::shared_ptr<XskWorker> xskInfo;
 
 private:
   void connectUDPSockets();
@@ -945,7 +945,7 @@ public:
 #ifdef HAVE_XSK
   void registerXsk(std::shared_ptr<XskSocket>& xsk)
   {
-    xskInfo = XskExtraInfo::create();
+    xskInfo = XskWorker::create();
     if (d_config.sourceAddr.sin4.sin_family == 0) {
       throw runtime_error("invalid source addr");
     }

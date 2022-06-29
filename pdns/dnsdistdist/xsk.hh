@@ -48,7 +48,7 @@
 #include <xdp/xsk.h>
 
 class XskPacket;
-class XskExtraInfo;
+class XskWorker;
 class XskSocket;
 
 #ifdef HAVE_XSK
@@ -57,7 +57,7 @@ using XskPacketPtr = std::unique_ptr<XskPacket>;
 // We use an XskSocket to manage an AF_XDP Socket corresponding to a NIC queue.
 // The XDP program running in the kernel redirects the data to the XskSocket in userspace.
 // XskSocket routes packets to multiple worker threads registered on XskSocket via XskSocket::addWorker based on the destination port number of the packet.
-// The kernel and the worker thread holding XskExtraInfo will wake up the XskSocket through XskFd and the Eventfd corresponding to each worker thread, respectively.
+// The kernel and the worker thread holding XskWorker will wake up the XskSocket through XskFd and the Eventfd corresponding to each worker thread, respectively.
 class XskSocket
 {
   struct XskRouteInfo
@@ -65,7 +65,7 @@ class XskSocket
     __be16 port;
     int xskSocketWaker;
     int workerWaker;
-    std::shared_ptr<XskExtraInfo> worker;
+    std::shared_ptr<XskWorker> worker;
   };
   boost::multi_index_container<
     XskRouteInfo,
@@ -116,7 +116,7 @@ public:
   int wait(int timeout);
   void send(std::vector<XskPacketPtr>& packets);
   std::vector<XskPacketPtr> recv(uint32_t recvSizeMax, uint32_t* failedCount);
-  void addWorker(std::shared_ptr<XskExtraInfo> s, __be16 port, bool isTCP);
+  void addWorker(std::shared_ptr<XskWorker> s, __be16 port, bool isTCP);
 };
 class XskPacket
 {
@@ -141,7 +141,7 @@ private:
   uint32_t flags{0};
 
   friend XskSocket;
-  friend XskExtraInfo;
+  friend XskWorker;
   friend bool operator<(const XskPacketPtr& s1, const XskPacketPtr& s2) noexcept;
 
   constexpr static uint8_t DefaultTTL = 64;
@@ -186,15 +186,15 @@ public:
 };
 bool operator<(const XskPacketPtr& s1, const XskPacketPtr& s2) noexcept;
 
-// XskExtraInfo obtains XskPackets of specific ports in the NIC from XskSocket through cq. 
-// After finishing processing the packet, XskExtraInfo puts the packet into sq so that XskSocket decides whether to send it through the network card according to XskPacket::flags.
-// XskExtraInfo wakes up XskSocket via xskSocketWaker after putting the packets in sq.
-class XskExtraInfo : std::enable_shared_from_this<XskExtraInfo>
+// XskWorker obtains XskPackets of specific ports in the NIC from XskSocket through cq. 
+// After finishing processing the packet, XskWorker puts the packet into sq so that XskSocket decides whether to send it through the network card according to XskPacket::flags.
+// XskWorker wakes up XskSocket via xskSocketWaker after putting the packets in sq.
+class XskWorker : std::enable_shared_from_this<XskWorker>
 {
   using XskPacketRing = boost::lockfree::spsc_queue<XskPacket*, boost::lockfree::capacity<512>>;
 
 public:
-  XskExtraInfo();
+  XskWorker();
   int workerWaker;
   int xskSocketWaker;
   uint8_t* umemBufBase;
@@ -206,18 +206,18 @@ public:
 
   static int createEventfd();
   static void notify(int fd);
-  static std::shared_ptr<XskExtraInfo> create();
+  static std::shared_ptr<XskWorker> create();
   void notifyWorker() noexcept;
   void notifyXskSocket() noexcept;
   void waitForXskSocket() noexcept;
   void cleanWorkerNotification() noexcept;
   void cleanSocketNotification() noexcept;
-  ~XskExtraInfo();
+  ~XskWorker();
   [[nodiscard]] uint64_t frameOffset(const XskPacket& s) const noexcept;
   void fillUniqueEmptyOffset();
   void* getEmptyframe();
 };
-std::vector<pollfd> getPollFdsForWorker(XskExtraInfo& info);
+std::vector<pollfd> getPollFdsForWorker(XskWorker& info);
 #else
 class XskSocket
 {
@@ -225,7 +225,7 @@ class XskSocket
 class XskPacket
 {
 };
-class XskExtraInfo : std::enable_shared_from_this<XskExtraInfo>
+class XskWorker : std::enable_shared_from_this<XskWorker>
 {
 };
 

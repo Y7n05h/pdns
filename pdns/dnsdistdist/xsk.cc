@@ -450,7 +450,7 @@ const ComboAddress& XskPacket::getToAddr() const noexcept
 {
   return to;
 }
-void XskExtraInfo::notify(int fd)
+void XskWorker::notify(int fd)
 {
   uint64_t value = 1;
   ssize_t res = 0;
@@ -460,7 +460,7 @@ void XskExtraInfo::notify(int fd)
     throw runtime_error("Unable Wake Up XskSocket Failed");
   }
 }
-XskExtraInfo::XskExtraInfo()
+XskWorker::XskWorker()
 {
   workerWaker = createEventfd();
   xskSocketWaker = createEventfd();
@@ -679,7 +679,7 @@ std::unique_ptr<PacketBuffer> XskPacket::cloneHeadertoPacketBuffer() const
   memcpy(tmp->data(), frame, size);
   return tmp;
 }
-int XskExtraInfo::createEventfd()
+int XskWorker::createEventfd()
 {
   auto fd = ::eventfd(0, EFD_CLOEXEC);
   if (fd < 0) {
@@ -687,20 +687,20 @@ int XskExtraInfo::createEventfd()
   }
   return fd;
 }
-void XskExtraInfo::waitForXskSocket() noexcept
+void XskWorker::waitForXskSocket() noexcept
 {
   uint64_t x = read(workerWaker, &x, sizeof(x));
 }
-void XskExtraInfo::notifyXskSocket() noexcept
+void XskWorker::notifyXskSocket() noexcept
 {
   notify(xskSocketWaker);
 }
 
-std::shared_ptr<XskExtraInfo> XskExtraInfo::create()
+std::shared_ptr<XskWorker> XskWorker::create()
 {
-  return std::make_shared<XskExtraInfo>();
+  return std::make_shared<XskWorker>();
 }
-void XskSocket::addWorker(std::shared_ptr<XskExtraInfo> s, __be16 port, bool isTCP)
+void XskSocket::addWorker(std::shared_ptr<XskWorker> s, __be16 port, bool isTCP)
 {
   extern std::atomic<bool> g_configurationDone;
   if (g_configurationDone) {
@@ -724,16 +724,16 @@ void XskSocket::addWorker(std::shared_ptr<XskExtraInfo> s, __be16 port, bool isT
     .events = POLLIN,
     .revents = 0});
 };
-uint64_t XskExtraInfo::frameOffset(const XskPacket& s) const noexcept
+uint64_t XskWorker::frameOffset(const XskPacket& s) const noexcept
 {
   return s.frame - umemBufBase;
 }
-XskExtraInfo::~XskExtraInfo()
+XskWorker::~XskWorker()
 {
   close(workerWaker);
   close(xskSocketWaker);
 }
-void XskExtraInfo::notifyWorker() noexcept
+void XskWorker::notifyWorker() noexcept
 {
   notify(workerWaker);
 }
@@ -753,15 +753,15 @@ void XskSocket::getMACFromIfName()
   const auto res = t1.tv_sec * 1000 + t1.tv_nsec / 1000000L - (t2.tv_sec * 1000 + t2.tv_nsec / 1000000L);
   return static_cast<int>(res);
 }
-void XskExtraInfo::cleanWorkerNotification() noexcept
+void XskWorker::cleanWorkerNotification() noexcept
 {
   uint64_t x = read(xskSocketWaker, &x, sizeof(x));
 }
-void XskExtraInfo::cleanSocketNotification() noexcept
+void XskWorker::cleanSocketNotification() noexcept
 {
   uint64_t x = read(workerWaker, &x, sizeof(x));
 }
-std::vector<pollfd> getPollFdsForWorker(XskExtraInfo& info)
+std::vector<pollfd> getPollFdsForWorker(XskWorker& info)
 {
   std::vector<pollfd> fds;
   int timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
@@ -780,7 +780,7 @@ std::vector<pollfd> getPollFdsForWorker(XskExtraInfo& info)
   });
   return fds;
 }
-void XskExtraInfo::fillUniqueEmptyOffset()
+void XskWorker::fillUniqueEmptyOffset()
 {
   auto frames = sharedEmptyFrameOffset->lock();
   const auto moveSize = std::min(static_cast<size_t>(32), frames->size());
@@ -788,7 +788,7 @@ void XskExtraInfo::fillUniqueEmptyOffset()
     uniqueEmptyFrameOffset.insert(uniqueEmptyFrameOffset.end(), std::make_move_iterator(frames->end() - moveSize), std::make_move_iterator(frames->end()));
   }
 }
-void* XskExtraInfo::getEmptyframe()
+void* XskWorker::getEmptyframe()
 {
   if (!uniqueEmptyFrameOffset.empty()) {
     auto offset = uniqueEmptyFrameOffset.back();
