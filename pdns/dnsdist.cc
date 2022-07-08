@@ -621,7 +621,7 @@ void responderThread(std::shared_ptr<DownstreamState> dss)
       if (res) {
         throw std::runtime_error("timerfd_settime failed:" + stringerror(errno));
       }
-      const auto xskFd = xskInfo->workerWaker;
+      const auto xskFd = xskInfo->workerWaker.getHandle();
       while (!dss->isStopped()) {
         poll(pollfds.data(), pollfds.size(), -1);
         bool needNotify = false;
@@ -636,9 +636,10 @@ void responderThread(std::shared_ptr<DownstreamState> dss)
             const auto queryId = dh->id;
             auto* ids = dss->getExistingState(queryId);
             if (!ids || xskFd != ids->backendFD || !ids->xskPacketHeader) {
-              if (healthCheckMap.count(queryId) != 0) {
-                auto data = std::move(healthCheckMap[queryId]);
-                healthCheckMap.erase(queryId);
+              auto iter = healthCheckMap.find(queryId);
+              if (iter == healthCheckMap.end()) {
+                auto data = std::move(iter->second);
+                healthCheckMap.erase(iter);
                 packet->cloneIntoPacketBuffer(data->d_buffer);
                 updateHealthCheckResult(data->d_ds, data->d_initial, handleResponse(data));
               }

@@ -75,17 +75,14 @@ int XskSocket::firstTimeout()
   return res;
 }
 XskSocket::XskSocket(size_t frameNum_, const std::string& ifName_, uint32_t queue_id, std::string xskMapPath) :
-  frameNum(frameNum_), queueId(queue_id), ifName(ifName_), sharedEmptyFrameOffset(std::make_shared<LockGuarded<vector<uint64_t>>>())
+  frameNum(frameNum_), queueId(queue_id), ifName(ifName_), socket(nullptr, xsk_socket__delete), sharedEmptyFrameOffset(std::make_shared<LockGuarded<vector<uint64_t>>>())
 {
   if (!isPowOfTwo(frameNum_) || !isPowOfTwo(frameSize)
       || !isPowOfTwo(fqCapacity) || !isPowOfTwo(cqCapacity) || !isPowOfTwo(rxCapacity) || !isPowOfTwo(txCapacity)) {
     throw std::runtime_error("The number of frame , the size of frame and the capacity of rings must is a pow of 2");
   }
   getMACFromIfName();
-  bufBase = static_cast<uint8_t*>(mmap(nullptr, frameSize * frameNum, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-  if (bufBase == MAP_FAILED) {
-    throw std::runtime_error("mmap failed");
-  }
+
   memset(&cq, 0, sizeof(cq));
   memset(&fq, 0, sizeof(fq));
   memset(&tx, 0, sizeof(tx));
@@ -96,19 +93,20 @@ XskSocket::XskSocket(size_t frameNum_, const std::string& ifName_, uint32_t queu
   umemCfg.frame_size = frameSize;
   umemCfg.frame_headroom = XSK_UMEM__DEFAULT_FRAME_HEADROOM;
   umemCfg.flags = 0;
-  auto ret = xsk_umem__create(&umem, bufBase, frameSize * frameNum, &fq, &cq, &umemCfg);
-  if (ret != 0) {
-    throw std::runtime_error("Error creating a umem of size" + std::to_string(frameSize * frameNum) + stringerror(ret));
-  }
-  xsk_socket_config socketCfg;
-  socketCfg.rx_size = rxCapacity;
-  socketCfg.tx_size = txCapacity;
-  socketCfg.bind_flags = XDP_USE_NEED_WAKEUP;
-  socketCfg.xdp_flags = XDP_FLAGS_SKB_MODE;
-  socketCfg.libxdp_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
-  ret = xsk_socket__create(&socket, ifName.c_str(), queue_id, umem, &rx, &tx, &socketCfg);
-  if (ret != 0) {
-    throw std::runtime_error("Error creating a xsk socket of if_name" + ifName + stringerror(ret));
+  umem.umemInit(frameNum_ * frameSize, &cq, &fq, &umemCfg);
+  {
+    xsk_socket_config socketCfg;
+    socketCfg.rx_size = rxCapacity;
+    socketCfg.tx_size = txCapacity;
+    socketCfg.bind_flags = XDP_USE_NEED_WAKEUP;
+    socketCfg.xdp_flags = XDP_FLAGS_SKB_MODE;
+    socketCfg.libxdp_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
+    xsk_socket* tmp = nullptr;
+    auto ret = xsk_socket__create(&tmp, ifName.c_str(), queue_id, umem.umem, &rx, &tx, &socketCfg);
+    if (ret != 0) {
+      throw std::runtime_error("Error creating a xsk socket of if_name" + ifName + stringerror(ret));
+    }
+    socket = std::unique_ptr<xsk_socket, void (*)(xsk_socket*)>(tmp, xsk_socket__delete);
   }
   for (uint64_t i = 0; i < frameNum; i++) {
     uniqueEmptyFrameOffset.push_back(i * frameSize);
@@ -123,7 +121,7 @@ XskSocket::XskSocket(size_t frameNum_, const std::string& ifName_, uint32_t queu
   if (xskMapFd.getHandle() < 0) {
     throw std::runtime_error("Error get BPF map from path");
   }
-  ret = bpf_map_update_elem(xskMapFd.getHandle(), &queue_id, &xskfd, 0);
+  auto ret = bpf_map_update_elem(xskMapFd.getHandle(), &queue_id, &xskfd, 0);
   if (ret) {
     throw std::runtime_error("Error insert into xsk_map");
   }
@@ -158,16 +156,10 @@ int XskSocket::wait(int timeout)
 }
 [[nodiscard]] uint64_t XskSocket::frameOffset(const XskPacket& packet) const noexcept
 {
-  return reinterpret_cast<uint64_t>(packet.frame) - reinterpret_cast<uint64_t>(bufBase);
-}
-XskSocket::~XskSocket()
-{
-  xsk_socket__delete(socket);
-  xsk_umem__delete(umem);
-  munmap(bufBase, frameNum * frameSize);
+  return reinterpret_cast<uint64_t>(packet.frame) - reinterpret_cast<uint64_t>(umem.bufBase);
 }
 
-int XskSocket::xskFd() const noexcept { return xsk_socket__fd(socket); }
+int XskSocket::xskFd() const noexcept { return xsk_socket__fd(socket.get()); }
 
 void XskSocket::send(std::vector<XskPacketPtr>& packets)
 {
@@ -197,7 +189,7 @@ std::vector<XskPacketPtr> XskSocket::recv(uint32_t recvSizeMax, uint32_t* failed
   if (recvSize <= 0) {
     return res;
   }
-  const auto baseAddr = reinterpret_cast<uint64_t>(bufBase);
+  const auto baseAddr = reinterpret_cast<uint64_t>(umem.bufBase);
   uint32_t count = 0;
   for (uint32_t i = 0; i < recvSize; i++) {
     const auto* desc = xsk_ring_cons__rx_desc(&rx, idx++);
@@ -237,6 +229,30 @@ void XskSocket::recycle(size_t size) noexcept
     uniqueEmptyFrameOffset.push_back(*xsk_ring_cons__comp_addr(&cq, idx++));
   }
   xsk_ring_cons__release(&cq, completeSize);
+}
+
+void XskSocket::XskUmem::umemInit(size_t memSize, xsk_ring_cons* cq, xsk_ring_prod* fq, xsk_umem_config* config)
+{
+  size = memSize;
+  bufBase = static_cast<uint8_t*>(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  if (bufBase == MAP_FAILED) {
+    throw std::runtime_error("mmap failed");
+  }
+  auto ret = xsk_umem__create(&umem, bufBase, size, fq, cq, config);
+  if (ret != 0) {
+    munmap(bufBase, size);
+    throw std::runtime_error("Error creating a umem of size" + std::to_string(size) + stringerror(ret));
+  }
+}
+
+XskSocket::XskUmem::~XskUmem()
+{
+  if (umem) {
+    xsk_umem__delete(umem);
+  }
+  if (bufBase) {
+    munmap(bufBase, size);
+  }
 }
 
 bool XskPacket::parse()
@@ -460,10 +476,9 @@ void XskWorker::notify(int fd)
     throw runtime_error("Unable Wake Up XskSocket Failed");
   }
 }
-XskWorker::XskWorker()
+XskWorker::XskWorker() :
+  workerWaker(createEventfd()), xskSocketWaker(createEventfd())
 {
-  workerWaker = createEventfd();
-  xskSocketWaker = createEventfd();
 }
 void* XskPacket::payloadData()
 {
@@ -700,19 +715,19 @@ std::shared_ptr<XskWorker> XskWorker::create()
 {
   return std::make_shared<XskWorker>();
 }
-void XskSocket::addWorker(std::shared_ptr<XskWorker> s, const ComboAddress &dest, bool isTCP)
+void XskSocket::addWorker(std::shared_ptr<XskWorker> s, const ComboAddress& dest, bool isTCP)
 {
   extern std::atomic<bool> g_configurationDone;
   if (g_configurationDone) {
     throw runtime_error("Adding a server with xsk at runtime is not supported");
   }
-  const auto socketWaker = s->xskSocketWaker;
-  const auto workerWaker = s->workerWaker;
+  const auto socketWaker = s->xskSocketWaker.getHandle();
+  const auto workerWaker = s->workerWaker.getHandle();
   const auto& socketWakerIdx = workers.get<0>();
   if (socketWakerIdx.contains(socketWaker)) {
     throw runtime_error("Server already exist");
   }
-  s->umemBufBase = bufBase;
+  s->umemBufBase = umem.bufBase;
   workers.insert(XskRouteInfo{
     .worker = std::move(s),
     .dest = dest,
@@ -727,11 +742,6 @@ void XskSocket::addWorker(std::shared_ptr<XskWorker> s, const ComboAddress &dest
 uint64_t XskWorker::frameOffset(const XskPacket& s) const noexcept
 {
   return s.frame - umemBufBase;
-}
-XskWorker::~XskWorker()
-{
-  close(workerWaker);
-  close(xskSocketWaker);
 }
 void XskWorker::notifyWorker() noexcept
 {

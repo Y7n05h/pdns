@@ -67,6 +67,15 @@ class XskSocket
     int xskSocketWaker;
     int workerWaker;
   };
+  struct XskUmem
+  {
+    xsk_umem* umem{nullptr};
+    uint8_t* bufBase{nullptr};
+    size_t size;
+    void umemInit(size_t memSize, xsk_ring_cons* cq, xsk_ring_prod* fq, xsk_umem_config* config);
+    ~XskUmem();
+    XskUmem() = default;
+  };
   boost::multi_index_container<
     XskRouteInfo,
     boost::multi_index::indexed_by<
@@ -80,15 +89,14 @@ class XskSocket
   const uint32_t queueId;
   std::priority_queue<XskPacketPtr> waitForDelay;
   std::string ifName;
-  uint8_t* bufBase;
   vector<pollfd> fds;
   vector<uint64_t> uniqueEmptyFrameOffset;
   xsk_ring_cons cq;
   xsk_ring_cons rx;
   xsk_ring_prod fq;
   xsk_ring_prod tx;
-  xsk_socket* socket;
-  xsk_umem* umem;
+  std::unique_ptr<xsk_socket, void (*)(xsk_socket*)> socket;
+  XskUmem umem;
   bpf_object* prog;
 
   static constexpr uint32_t fqCapacity = XSK_RING_PROD__DEFAULT_NUM_DESCS * 4;
@@ -111,7 +119,6 @@ public:
   std::shared_ptr<LockGuarded<vector<uint64_t>>> sharedEmptyFrameOffset;
   XskSocket(size_t frameNum, const std::string& ifName, uint32_t queue_id, std::string xskMapPath);
   MACAddr source;
-  ~XskSocket();
   [[nodiscard]] int xskFd() const noexcept;
   int wait(int timeout);
   void send(std::vector<XskPacketPtr>& packets);
@@ -195,8 +202,8 @@ class XskWorker : std::enable_shared_from_this<XskWorker>
 
 public:
   XskWorker();
-  int workerWaker;
-  int xskSocketWaker;
+  FDWrapper workerWaker;
+  FDWrapper xskSocketWaker;
   uint8_t* umemBufBase;
   std::shared_ptr<LockGuarded<vector<uint64_t>>> sharedEmptyFrameOffset;
   vector<uint64_t> uniqueEmptyFrameOffset;
@@ -212,7 +219,6 @@ public:
   void waitForXskSocket() noexcept;
   void cleanWorkerNotification() noexcept;
   void cleanSocketNotification() noexcept;
-  ~XskWorker();
   [[nodiscard]] uint64_t frameOffset(const XskPacket& s) const noexcept;
   void fillUniqueEmptyOffset();
   void* getEmptyframe();
