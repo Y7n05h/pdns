@@ -3108,16 +3108,16 @@ void XskRouter(std::shared_ptr<XskSocket> xsk)
   const auto size = xsk->fds.size();
   std::set<int> needNotify;
   const auto& xskWakerIdx = xsk->workers.get<0>();
-  const auto& portIdx = xsk->workers.get<1>();
+  const auto& destIdx = xsk->workers.get<1>();
   while (true) {
     auto ready = xsk->wait(-1);
     if (xsk->fds[0].revents & POLLIN) {
       auto packets = xsk->recv(64, &failed);
       g_stats.nonCompliantQueries += failed;
       for (auto &packet : packets) {
-        const auto destPort = packet->getToAddr().getNetworkOrderPort();
-        auto res = portIdx.find(destPort);
-        if (res == portIdx.end()) {
+        const auto dest = packet->getToAddr();
+        auto res = destIdx.find(dest);
+        if (res == destIdx.end()) {
           xsk->uniqueEmptyFrameOffset.push_back(xsk->frameOffset(*packet));
           continue;
         }

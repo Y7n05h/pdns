@@ -456,7 +456,7 @@ void XskWorker::notify(int fd)
   ssize_t res = 0;
   while ((res = write(fd, &value, sizeof(value))) == EINTR) {
   }
-  if (res != 8) {
+  if (res != sizeof(value)) {
     throw runtime_error("Unable Wake Up XskSocket Failed");
   }
 }
@@ -700,7 +700,7 @@ std::shared_ptr<XskWorker> XskWorker::create()
 {
   return std::make_shared<XskWorker>();
 }
-void XskSocket::addWorker(std::shared_ptr<XskWorker> s, __be16 port, bool isTCP)
+void XskSocket::addWorker(std::shared_ptr<XskWorker> s, const ComboAddress &dest, bool isTCP)
 {
   extern std::atomic<bool> g_configurationDone;
   if (g_configurationDone) {
@@ -714,10 +714,10 @@ void XskSocket::addWorker(std::shared_ptr<XskWorker> s, __be16 port, bool isTCP)
   }
   s->umemBufBase = bufBase;
   workers.insert(XskRouteInfo{
-    .port = port,
+    .worker = std::move(s),
+    .dest = dest,
     .xskSocketWaker = socketWaker,
     .workerWaker = workerWaker,
-    .worker = std::move(s),
   });
   fds.push_back(pollfd{
     .fd = socketWaker,

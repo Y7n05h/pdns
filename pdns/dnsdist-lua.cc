@@ -809,9 +809,9 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
       parseXskVars(vars, socket);
       if (socket) {
         udpCS->xskInfo = XskWorker::create();
-        socket->addWorker(udpCS->xskInfo, loc.getNetworkOrderPort(), false);
+        socket->addWorker(udpCS->xskInfo, loc, false);
         // tcpCS->xskInfo=XskWorker::create();
-        // TODO: socket->addWorker(tcpCS->xskInfo, loc.getNetworkOrderPort(), true);
+        // TODO: socket->addWorker(tcpCS->xskInfo, loc, true);
       }
 #endif /* HAVE_XSK */
       g_frontends.push_back(std::move(udpCS));
@@ -859,9 +859,9 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
       parseXskVars(vars, socket);
       if (socket) {
         udpCS->xskInfo = XskWorker::create();
-        socket->addWorker(udpCS->xskInfo, loc.getNetworkOrderPort(), false);
+        socket->addWorker(udpCS->xskInfo, loc, false);
         // TODO tcpCS->xskInfo=XskWorker::create();
-        // TODO socket->addWorker(tcpCS->xskInfo, loc.getNetworkOrderPort(),true);
+        // TODO socket->addWorker(tcpCS->xskInfo, loc, true);
       }
 #endif /* HAVE_XSK */
       g_frontends.push_back(std::move(udpCS));

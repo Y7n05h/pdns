@@ -62,16 +62,16 @@ class XskSocket
 {
   struct XskRouteInfo
   {
-    __be16 port;
+    std::shared_ptr<XskWorker> worker;
+    ComboAddress dest;
     int xskSocketWaker;
     int workerWaker;
-    std::shared_ptr<XskWorker> worker;
   };
   boost::multi_index_container<
     XskRouteInfo,
     boost::multi_index::indexed_by<
       boost::multi_index::hashed_unique<boost::multi_index::key<&XskRouteInfo::xskSocketWaker>>,
-      boost::multi_index::hashed_unique<boost::multi_index::key<&XskRouteInfo::port>>>>
+      boost::multi_index::hashed_unique<boost::multi_index::key<&XskRouteInfo::dest>, ComboAddress::addressPortOnlyHash>>>
     workers;
   static constexpr size_t holdThreshold = 256;
   static constexpr size_t fillThreshold = 128;
@@ -116,7 +116,7 @@ public:
   int wait(int timeout);
   void send(std::vector<XskPacketPtr>& packets);
   std::vector<XskPacketPtr> recv(uint32_t recvSizeMax, uint32_t* failedCount);
-  void addWorker(std::shared_ptr<XskWorker> s, __be16 port, bool isTCP);
+  void addWorker(std::shared_ptr<XskWorker> s, const ComboAddress& dest, bool isTCP);
 };
 class XskPacket
 {
