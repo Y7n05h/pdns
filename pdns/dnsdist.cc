@@ -583,7 +583,7 @@ void handleResponseSent(const IDState& ids, double udiff, const ComboAddress& cl
   }
 }
 #ifdef HAVE_XSK
-void XskHealthCheck(std::shared_ptr<DownstreamState>& dss, std::unordered_map<uint32_t, std::shared_ptr<HealthCheckData>>& map, bool initial = false)
+void XskHealthCheck(std::shared_ptr<DownstreamState>& dss, std::unordered_map<uint16_t, std::shared_ptr<HealthCheckData>>& map, bool initial = false)
 {
   auto& xskInfo = dss->xskInfo;
   std::shared_ptr<HealthCheckData> data;
@@ -596,7 +596,8 @@ void XskHealthCheck(std::shared_ptr<DownstreamState>& dss, std::unordered_map<ui
   xskPacket->setPayload(packet);
   xskPacket->rewrite();
   xskInfo->sq.push(xskPacket);
-  map[data->d_queryID] = std::move(data);
+  const auto queryId = data->d_queryID;
+  map[queryId] = std::move(data);
 }
 #endif /* HAVE_XSK */
 void processResponderPacket(std::shared_ptr<DownstreamState>& dss, PacketBuffer& response, LocalStateHolder<std::vector<DNSDistResponseRuleAction>>& localRespRuleActions, IDState* ids, bool& shouldRelease, int& delayMsec);
@@ -611,7 +612,7 @@ void responderThread(std::shared_ptr<DownstreamState> dss)
     if (dss->xskInfo) {
       auto xskInfo = dss->xskInfo;
       auto pollfds = getPollFdsForWorker(*xskInfo);
-      std::unordered_map<uint32_t, std::shared_ptr<HealthCheckData>> healthCheckMap;
+      std::unordered_map<uint16_t, std::shared_ptr<HealthCheckData>> healthCheckMap;
       XskHealthCheck(dss, healthCheckMap, true);
       itimerspec tm;
       tm.it_value.tv_sec = dss->d_config.checkTimeout / 1000;
@@ -637,7 +638,7 @@ void responderThread(std::shared_ptr<DownstreamState> dss)
             auto* ids = dss->getExistingState(queryId);
             if (!ids || xskFd != ids->backendFD || !ids->xskPacketHeader) {
               auto iter = healthCheckMap.find(queryId);
-              if (iter == healthCheckMap.end()) {
+              if (iter != healthCheckMap.end()) {
                 auto data = std::move(iter->second);
                 healthCheckMap.erase(iter);
                 packet->cloneIntoPacketBuffer(data->d_buffer);
@@ -678,13 +679,11 @@ void responderThread(std::shared_ptr<DownstreamState> dss)
           else {
             --dss->d_nextCheck;
           }
-          timespec now;
-          auto now_nanosecond = now.tv_nsec + now.tv_sec * 1000000000;
-          gettime(&now);
+          timeval now;
+          gettimeofday(&now, nullptr);
           for (auto i = healthCheckMap.begin(); i != healthCheckMap.end();) {
             auto& ttd = i->second->d_ttd;
-            auto ttd_nanosecond = ttd.tv_sec * 1000000000 + ttd.tv_usec * 1000;
-            if (ttd_nanosecond < now_nanosecond) {
+            if (ttd < now) {
               updateHealthCheckResult(dss, i->second->d_initial, false);
               i = healthCheckMap.erase(i);
             }
