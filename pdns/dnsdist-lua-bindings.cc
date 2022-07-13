@@ -702,6 +702,7 @@ void setupLuaBindings(LuaContext& luaCtx, bool client)
     uint32_t frameNums;
     std::string ifName;
     std::string path;
+    std::string poolName;
     if (opts.count("NIC_queue_id") == 1) {
       queue_id = boost::get<uint32_t>(opts.at("NIC_queue_id"));
     }
@@ -724,10 +725,13 @@ void setupLuaBindings(LuaContext& luaCtx, bool client)
       path = boost::get<std::string>(opts.at("xskMapPath"));
     }
     else {
-      throw std::runtime_error("bpfProgPath field is required!");
+      throw std::runtime_error("xskMapPath field is required!");
+    }
+    if (opts.count("pool") == 1) {
+      poolName = boost::get<std::string>(opts.at("pool"));
     }
     extern std::vector<std::shared_ptr<XskSocket>> g_xsk;
-    auto socket = std::make_shared<XskSocket>(frameNums, ifName, queue_id, path);
+    auto socket = std::make_shared<XskSocket>(frameNums, ifName, queue_id, path, poolName);
     g_xsk.push_back(socket); 
     return socket;
   });

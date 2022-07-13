@@ -88,7 +88,8 @@ class XskSocket
   const size_t frameNum;
   const uint32_t queueId;
   std::priority_queue<XskPacketPtr> waitForDelay;
-  std::string ifName;
+  const std::string ifName;
+  const std::string poolName;
   vector<pollfd> fds;
   vector<uint64_t> uniqueEmptyFrameOffset;
   xsk_ring_cons cq;
@@ -117,7 +118,7 @@ class XskSocket
 
 public:
   std::shared_ptr<LockGuarded<vector<uint64_t>>> sharedEmptyFrameOffset;
-  XskSocket(size_t frameNum, const std::string& ifName, uint32_t queue_id, std::string xskMapPath);
+  XskSocket(size_t frameNum, const std::string& ifName, uint32_t queue_id, const std::string& xskMapPath, const std::string& poolName_);
   MACAddr source;
   [[nodiscard]] int xskFd() const noexcept;
   int wait(int timeout);
@@ -193,24 +194,25 @@ public:
 };
 bool operator<(const XskPacketPtr& s1, const XskPacketPtr& s2) noexcept;
 
-// XskWorker obtains XskPackets of specific ports in the NIC from XskSocket through cq. 
+// XskWorker obtains XskPackets of specific ports in the NIC from XskSocket through cq.
 // After finishing processing the packet, XskWorker puts the packet into sq so that XskSocket decides whether to send it through the network card according to XskPacket::flags.
 // XskWorker wakes up XskSocket via xskSocketWaker after putting the packets in sq.
-class XskWorker : std::enable_shared_from_this<XskWorker>
+class XskWorker
 {
   using XskPacketRing = boost::lockfree::spsc_queue<XskPacket*, boost::lockfree::capacity<512>>;
 
 public:
-  XskWorker();
-  FDWrapper workerWaker;
-  FDWrapper xskSocketWaker;
   uint8_t* umemBufBase;
   std::shared_ptr<LockGuarded<vector<uint64_t>>> sharedEmptyFrameOffset;
   vector<uint64_t> uniqueEmptyFrameOffset;
   XskPacketRing cq;
   XskPacketRing sq;
+  std::string poolName;
   size_t frameSize;
+  FDWrapper workerWaker;
+  FDWrapper xskSocketWaker;
 
+  XskWorker();
   static int createEventfd();
   static void notify(int fd);
   static std::shared_ptr<XskWorker> create();

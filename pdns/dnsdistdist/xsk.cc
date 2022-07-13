@@ -74,8 +74,8 @@ int XskSocket::firstTimeout()
   }
   return res;
 }
-XskSocket::XskSocket(size_t frameNum_, const std::string& ifName_, uint32_t queue_id, std::string xskMapPath) :
-  frameNum(frameNum_), queueId(queue_id), ifName(ifName_), socket(nullptr, xsk_socket__delete), sharedEmptyFrameOffset(std::make_shared<LockGuarded<vector<uint64_t>>>())
+XskSocket::XskSocket(size_t frameNum_, const std::string& ifName_, uint32_t queue_id, const std::string& xskMapPath, const std::string& poolName_) :
+  frameNum(frameNum_), queueId(queue_id), ifName(ifName_), poolName(poolName_), socket(nullptr, xsk_socket__delete), sharedEmptyFrameOffset(std::make_shared<LockGuarded<vector<uint64_t>>>())
 {
   if (!isPowOfTwo(frameNum_) || !isPowOfTwo(frameSize)
       || !isPowOfTwo(fqCapacity) || !isPowOfTwo(cqCapacity) || !isPowOfTwo(rxCapacity) || !isPowOfTwo(txCapacity)) {
@@ -721,6 +721,7 @@ void XskSocket::addWorker(std::shared_ptr<XskWorker> s, const ComboAddress& dest
   if (g_configurationDone) {
     throw runtime_error("Adding a server with xsk at runtime is not supported");
   }
+  s->poolName = poolName;
   const auto socketWaker = s->xskSocketWaker.getHandle();
   const auto workerWaker = s->workerWaker.getHandle();
   const auto& socketWakerIdx = workers.get<0>();

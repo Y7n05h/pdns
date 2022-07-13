@@ -1382,7 +1382,9 @@ ProcessQueryResult processQuery(DNSQuestion& dq, ClientState& cs, LocalHolders& 
       ++cs.responses;
       return ProcessQueryResult::SendAnswer;
     }
-
+    if (cs.xskInfo) {
+      dq.poolname = cs.xskInfo->poolName;
+    }
     std::shared_ptr<ServerPool> serverPool = getPool(*holders.pools, dq.poolname);
     std::shared_ptr<ServerPolicy> poolPolicy = serverPool->policy;
     dq.packetCache = serverPool->packetCache;
