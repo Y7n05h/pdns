@@ -109,7 +109,7 @@ XskSocket::XskSocket(size_t frameNum_, const std::string& ifName_, uint32_t queu
     socket = std::unique_ptr<xsk_socket, void (*)(xsk_socket*)>(tmp, xsk_socket__delete);
   }
   for (uint64_t i = 0; i < frameNum; i++) {
-    uniqueEmptyFrameOffset.push_back(i * frameSize);
+    uniqueEmptyFrameOffset.push_back(i * frameSize + XDP_PACKET_HEADROOM);
   }
   fillFq(fqCapacity);
   const auto xskfd = xskFd();
@@ -420,7 +420,7 @@ bool XskPacket::isIPV6() const noexcept
   return eth->h_proto == htons(ETH_P_IPV6);
 }
 XskPacket::XskPacket(void* frame_, size_t dataSize, size_t frameSize) :
-  frame(static_cast<uint8_t*>(frame_)), payloadEnd(static_cast<uint8_t*>(frame) + dataSize), frameEnd(static_cast<uint8_t*>(frame) + frameSize)
+  frame(static_cast<uint8_t*>(frame_)), payloadEnd(static_cast<uint8_t*>(frame) + dataSize), frameEnd(static_cast<uint8_t*>(frame) + frameSize - XDP_PACKET_HEADROOM)
 {
 }
 PacketBuffer XskPacket::clonePacketBuffer() const
