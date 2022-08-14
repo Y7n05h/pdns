@@ -667,6 +667,19 @@ void responderThread(std::shared_ptr<DownstreamState> dss)
           xskInfo->cleanSocketNotification();
         }
         if (pollfds[1].revents & POLLIN) {
+          timeval now;
+          gettimeofday(&now, nullptr);
+          for (auto i = healthCheckMap.begin(); i != healthCheckMap.end();) {
+            auto& ttd = i->second->d_ttd;
+            if (ttd < now) {
+              updateHealthCheckResult(dss, i->second->d_initial, false);
+              auto &data=i->second;
+              i = healthCheckMap.erase(i);
+            }
+            else {
+              ++i;
+            }
+          }
           needNotify = true;
           dss->updateStatisticsInfo();
           dss->handleTimeouts();
@@ -679,18 +692,7 @@ void responderThread(std::shared_ptr<DownstreamState> dss)
           else {
             --dss->d_nextCheck;
           }
-          timeval now;
-          gettimeofday(&now, nullptr);
-          for (auto i = healthCheckMap.begin(); i != healthCheckMap.end();) {
-            auto& ttd = i->second->d_ttd;
-            if (ttd < now) {
-              updateHealthCheckResult(dss, i->second->d_initial, false);
-              i = healthCheckMap.erase(i);
-            }
-            else {
-              ++i;
-            }
-          }
+
           uint64_t tmp;
           res = read(pollfds[1].fd, &tmp, sizeof(tmp));
         }
