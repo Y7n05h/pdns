@@ -273,7 +273,7 @@ bool XskPacket::parse()
     to = makeComboAddressFromRaw(4, reinterpret_cast<const char*>(&ip->daddr), sizeof(ip->daddr));
     l4Protocol = ip->protocol;
     l4Header = reinterpret_cast<uint8_t*>(ip + 1);
-    payloadEnd = std::min(reinterpret_cast<uint8_t*>(ip) + ip->tot_len, payloadEnd);
+    payloadEnd = std::min(reinterpret_cast<uint8_t*>(ip) + ntohs(ip->tot_len), payloadEnd);
   }
   else if (eth->h_proto == htons(ETH_P_IPV6)) {
     auto* ipv6 = reinterpret_cast<ipv6hdr*>(eth + 1);
@@ -284,7 +284,7 @@ bool XskPacket::parse()
     from = makeComboAddressFromRaw(6, reinterpret_cast<const char*>(&ipv6->saddr), sizeof(ipv6->saddr));
     to = makeComboAddressFromRaw(6, reinterpret_cast<const char*>(&ipv6->daddr), sizeof(ipv6->daddr));
     l4Protocol = ipv6->nexthdr;
-    payloadEnd = std::min(l4Header + ipv6->payload_len, payloadEnd);
+    payloadEnd = std::min(l4Header + ntohs(ipv6->payload_len), payloadEnd);
   }
   else {
     return false;
@@ -299,7 +299,7 @@ bool XskPacket::parse()
     if (payload > payloadEnd) {
       return false;
     }
-    payloadEnd = std::min(l4Header + udp->len, payloadEnd);
+    payloadEnd = std::min(l4Header + ntohs(udp->len), payloadEnd);
     from.setPort(ntohs(udp->source));
     to.setPort(ntohs(udp->dest));
     return true;
